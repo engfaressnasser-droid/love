@@ -1,0 +1,6 @@
+{
+  "name": "Hikayatuna — Our Love Story & Memories",
+  "description": "موقع رومانسي بسيط وأنيق لحفظ صورنا، ذكرياتنا الجميلة، خط الزمن لحكايتنا، ورسائل الحب بيننا.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

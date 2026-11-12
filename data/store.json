@@ -1,0 +1,49 @@
+{
+  "profile": {
+    "partnerOneName": "أحمد",
+    "partnerTwoName": "أيوتى",
+    "startDate": "2026-05-21",
+    "anniversaryDate": "2026-05-21",
+    "heroTitle": "كل سنة وأنتى أجمل حاجة فى حياتى يا ايويه ❤️",
+    "heroSubtitle": "النهاردة مش يوم عادي أبداً.. النهاردة بنحتفل بأجمل ضحكة وأطيب قلب في الدنيا",
+    "romanticTagline": "حكايتنا الحلوة",
+    "firstMetLabel": "أول ما اتعرفنا",
+    "specialMilestonesCount": 15,
+    "songTitle": "تامر عاشور — خليني في حضنك"
+  },
+  "memories": [
+    {
+      "title": "ذكرى تجربة المزامنة السحابية 1793642616285",
+      "date": "2024-05-21",
+      "location": "القاهرة - برج القاهرة",
+      "category": "special_dates",
+      "story": "أحلى لحظة وثقناها وتظهر على كل الهواتف فوراً",
+      "imageUrl": "/src/assets/images/memory_night_stroll_1793613846144.jpg",
+      "isFavorite": true,
+      "featuredSpan": "standard",
+      "id": "mem-1793642616511"
+    },
+    {
+      "id": "test-mem-123",
+      "title": "أول رحلة على شاطئ البحر في الإسكندرية",
+      "date": "2025-06-15",
+      "location": "الإسكندرية",
+      "category": "special_dates",
+      "story": "يوم لا يُنسى مع أجمل إنسانة في الكون",
+      "imageUrl": "/assets/aistudio/image_b2de881d.png",
+      "isFavorite": true
+    }
+  ],
+  "letters": [
+    {
+      "id": "test-let-1",
+      "title": "إلى وتيني",
+      "content": "كل ثانية معاكي هي نعمة من ربنا",
+      "date": "2025-05-21",
+      "sender": "أحمد",
+      "recipient": "أيوتى",
+      "isPinned": true
+    }
+  ],
+  "updatedAt": "2026-11-02T18:03:36.517Z"
+}

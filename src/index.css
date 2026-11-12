@@ -1,0 +1,85 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    --font-heading: 'Cairo', 'Tajawal', system-ui, -apple-system, sans-serif;
+    --font-body: 'Tajawal', 'Cairo', system-ui, -apple-system, sans-serif;
+    --font-serif: 'Amiri', Georgia, serif;
+    --font-mono: 'JetBrains Mono', 'Cairo', monospace;
+  }
+
+  html {
+    font-family: var(--font-body);
+    scroll-behavior: smooth;
+    background-color: #0B060F;
+    color: #F3EBF5;
+  }
+
+  h1, h2, h3, .font-heading {
+    font-family: var(--font-heading);
+  }
+
+  .font-serif-display {
+    font-family: var(--font-serif);
+  }
+
+  .font-mono-num {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+/* Glowing Neon Text for the Romantic Hero Title */
+.neon-glow-pink {
+  color: #FFA5BA;
+  text-shadow: 
+    0 0 10px rgba(255, 77, 136, 0.8),
+    0 0 25px rgba(255, 41, 107, 0.6),
+    0 0 50px rgba(255, 20, 95, 0.4);
+}
+
+.neon-card-glow {
+  box-shadow: 
+    0 0 20px -5px rgba(236, 72, 153, 0.2),
+    inset 0 1px 1px rgba(255, 255, 255, 0.08);
+}
+
+.neon-box-glow {
+  box-shadow: 
+    0 0 15px -3px rgba(244, 63, 94, 0.35);
+}
+
+/* Floating animation */
+@keyframes floatSlow {
+  0% {
+    transform: translateY(105vh) rotate(0deg) scale(0.8);
+    opacity: 0;
+  }
+  15% {
+    opacity: 0.65;
+  }
+  85% {
+    opacity: 0.65;
+  }
+  100% {
+    transform: translateY(-10vh) rotate(360deg) scale(1.1);
+    opacity: 0;
+  }
+}
+
+.animate-float-heart {
+  animation: floatSlow var(--duration, 12s) linear infinite;
+  animation-delay: var(--delay, 0s);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, ::before, ::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+  .animate-float-heart {
+    display: none;
+  }
+}
