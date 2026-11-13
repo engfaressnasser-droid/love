@@ -4,9 +4,9 @@
  */
 
 import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { User } from 'firebase/auth';
 import {
   Crown,
-  Heart,
   Camera,
   Feather,
   Calendar,
@@ -15,6 +15,7 @@ import {
   Cloud,
   Download,
   UploadCloud,
+  AlertTriangle,
   RefreshCw,
 } from 'lucide-react';
 import {
@@ -30,8 +31,26 @@ import { UserRole, canEditSite } from './utils/authLogic';
 import {
   fetchServerData,
   saveServerData,
-  uploadImageToServer,
 } from './utils/apiClient';
+import { optimizeImage } from './utils/imageOptimizer';
+import {
+  ADMIN_OWNER_EMAIL,
+  isVerifiedAdminUser,
+  signInAdminWithGoogle,
+  signOutFirebaseAdmin,
+  subscribeToAuthState,
+  subscribeToSiteSettings,
+  subscribeToMemories,
+  subscribeToLetters,
+  saveProfileToFirestore,
+  createMemoryInFirestore,
+  updateMemoryFavoriteInFirestore,
+  deleteMemoryFromFirestore,
+  createLetterInFirestore,
+  updateLetterPinInFirestore,
+  deleteLetterFromFirestore,
+  syncAllDataToFirestore,
+} from './firebase';
 import { RomanticAuthGate } from './components/RomanticAuthGate';
 import { FloatingHearts } from './components/FloatingHearts';
 import { RomanticAudioPlayer } from './components/RomanticAudioPlayer';
@@ -53,11 +72,10 @@ const STORAGE_KEYS = {
   MEMORIES: 'hikayatuna_memories_v3',
   LETTERS: 'hikayatuna_letters_v3',
   AUTH_ROLE: 'hikayatuna_auth_role_v3',
-  AUTH_NAME: 'hikayatuna_auth_name_v3',
 };
 
 export default function App() {
-  // Authentication State
+  // Passcode Authentication State
   const [role, setRole] = useState<UserRole>(() => {
     if (typeof window !== 'undefined') {
       const params = new URLSearchParams(window.location.search);
@@ -75,10 +93,16 @@ export default function App() {
     return 'guest';
   });
 
+  // Firebase Owner Auth State (required for writing shared cloud updates)
+  const [firebaseUser, setFirebaseUser] = useState<User | null>(null);
+  const [isConnectingCloud, setIsConnectingCloud] = useState(false);
+  const [hasPendingLocalEdits, setHasPendingLocalEdits] = useState(false);
+
   const [welcomeBanner, setWelcomeBanner] = useState<string | null>(null);
   const [cloudStatus, setCloudStatus] = useState<'synced' | 'saving' | 'offline'>('synced');
 
-  const [profile, setProfile] = useState<CoupleProfile>(() => {
+  // Local/Fallback State (used prior to initial Firestore sync or before seeding)
+  const [localProfile, setLocalProfile] = useState<CoupleProfile>(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEYS.PROFILE);
       return saved ? JSON.parse(saved) : INITIAL_COUPLE_PROFILE;
@@ -87,7 +111,7 @@ export default function App() {
     }
   });
 
-  const [memories, setMemories] = useState<MemoryItem[]>(() => {
+  const [localMemories, setLocalMemories] = useState<MemoryItem[]>(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEYS.MEMORIES);
       return saved ? JSON.parse(saved) : INITIAL_MEMORIES;
@@ -96,7 +120,7 @@ export default function App() {
     }
   });
 
-  const [letters, setLetters] = useState<LoveLetter[]>(() => {
+  const [localLetters, setLocalLetters] = useState<LoveLetter[]>(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEYS.LETTERS);
       return saved ? JSON.parse(saved) : INITIAL_LETTERS;
@@ -104,6 +128,12 @@ export default function App() {
       return INITIAL_LETTERS;
     }
   });
+
+  // Authoritative Shared Cloud State (Firestore)
+  const [remoteInitialized, setRemoteInitialized] = useState<boolean | null>(null);
+  const [remoteProfile, setRemoteProfile] = useState<CoupleProfile | null>(null);
+  const [remoteMemories, setRemoteMemories] = useState<MemoryItem[]>([]);
+  const [remoteLetters, setRemoteLetters] = useState<LoveLetter[]>([]);
 
   // Filter & Search States (Direct photos: all vs favorites)
   const [activeFilter, setActiveFilter] = useState<'all' | 'favorites'>('all');
@@ -119,60 +149,125 @@ export default function App() {
   const [isControlMenuOpen, setIsControlMenuOpen] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const manualConnectInFlightRef = useRef(false);
   const isEditor = canEditSite(role);
+  const isCloudAdmin = isVerifiedAdminUser(firebaseUser);
 
-  // Sync from Cloud Server on mount and periodically across devices/phones
+  // Active data shown on screen: Firestore is authoritative whenever initialized
+  const profile = remoteInitialized && remoteProfile ? remoteProfile : localProfile;
+  const memories = remoteInitialized ? remoteMemories : localMemories;
+  const letters = remoteInitialized ? remoteLetters : localLetters;
+
+  // Keep refs to latest local data for automatic one-time migration when owner connects
+  const latestDataRef = useRef({ profile, memories, letters });
   useEffect(() => {
-    let isMounted = true;
+    latestDataRef.current = { profile, memories, letters };
+  }, [profile, memories, letters]);
 
-    async function loadInitial() {
-      try {
-        const remote = await fetchServerData();
-        if (!isMounted) return;
+  // 1. Subscribe to Firebase Auth state
+  useEffect(() => {
+    const unsubAuth = subscribeToAuthState((user) => {
+      setFirebaseUser(user);
+    });
+    return () => unsubAuth();
+  }, []);
 
-        if (remote && (remote.profile || remote.memories || remote.letters)) {
-          if (remote.profile) setProfile(remote.profile);
-          if (remote.memories && Array.isArray(remote.memories)) setMemories(remote.memories);
-          if (remote.letters && Array.isArray(remote.letters)) setLetters(remote.letters);
-          setCloudStatus('synced');
-        } else {
-          // If server is clean, seed server with initial profile and memories
-          await saveServerData({
-            profile,
-            memories,
-            letters,
-          });
-          setCloudStatus('synced');
+  // 2. Subscribe to real-time Firestore collections (works across ALL links & devices)
+  useEffect(() => {
+    const unsubSettings = subscribeToSiteSettings(
+      (cloudProfile, exists) => {
+        setRemoteInitialized(exists);
+        if (exists && cloudProfile) {
+          setRemoteProfile(cloudProfile);
+          setLocalProfile(cloudProfile);
         }
-      } catch (err) {
-        console.warn('Initial server sync note:', err);
+        setCloudStatus('synced');
+      },
+      () => {
         setCloudStatus('offline');
       }
-    }
+    );
 
-    loadInitial();
-
-    // Periodic cloud poll so that updates from any phone appear in real-time
-    const interval = setInterval(async () => {
-      try {
-        const remote = await fetchServerData();
-        if (!isMounted || !remote) return;
-        if (remote.profile) setProfile(remote.profile);
-        if (remote.memories && Array.isArray(remote.memories)) setMemories(remote.memories);
-        if (remote.letters && Array.isArray(remote.letters)) setLetters(remote.letters);
+    const unsubMemories = subscribeToMemories(
+      (cloudMemories) => {
+        setRemoteMemories(cloudMemories);
         setCloudStatus('synced');
-      } catch {
-        // Silently keep current data
+      },
+      () => {
+        setCloudStatus('offline');
       }
-    }, 15000);
+    );
+
+    const unsubLetters = subscribeToLetters(
+      (cloudLetters) => {
+        setRemoteLetters(cloudLetters);
+        setCloudStatus('synced');
+      },
+      () => {
+        setCloudStatus('offline');
+      }
+    );
 
     return () => {
-      isMounted = false;
-      clearInterval(interval);
+      unsubSettings();
+      unsubMemories();
+      unsubLetters();
     };
   }, []);
 
-  // Sync to localStorage as offline cache
+  // 3. Load any existing local container edits (data/store.json) ONLY if Firestore is not seeded yet
+  useEffect(() => {
+    if (remoteInitialized !== false) return;
+    let isMounted = true;
+
+    async function loadUnseededLocalServer() {
+      try {
+        const remote = await fetchServerData();
+        if (!isMounted || !remote) return;
+        if (remote.profile) setLocalProfile(remote.profile);
+        if (remote.memories && Array.isArray(remote.memories)) setLocalMemories(remote.memories);
+        if (remote.letters && Array.isArray(remote.letters)) setLocalLetters(remote.letters);
+      } catch {
+        // Ignore if server storage is unavailable
+      }
+    }
+
+    loadUnseededLocalServer();
+    return () => {
+      isMounted = false;
+    };
+  }, [remoteInitialized]);
+
+  // 4. Auto-seed Firestore when the verified owner connects for the first time
+  useEffect(() => {
+    if (
+      remoteInitialized === false &&
+      isCloudAdmin &&
+      firebaseUser &&
+      !manualConnectInFlightRef.current
+    ) {
+      const current = latestDataRef.current;
+      void syncAllDataToFirestore(
+        current.profile,
+        current.memories,
+        current.letters,
+        firebaseUser.uid,
+        true
+      )
+        .then((seeded) => {
+          if (seeded) {
+            setHasPendingLocalEdits(false);
+            setWelcomeBanner('تم رفع بياناتك للسحابة بنجاح وتظهر الآن على كل الروابط والهواتف ☁️✅');
+            setTimeout(() => setWelcomeBanner(null), 5000);
+          }
+        })
+        .catch((err) => {
+          console.error('Auto-seed error:', err);
+        });
+    }
+  }, [remoteInitialized, isCloudAdmin, firebaseUser]);
+
+  // Sync offline cache in localStorage whenever active data updates
   useEffect(() => {
     try {
       localStorage.setItem(STORAGE_KEYS.PROFILE, JSON.stringify(profile));
@@ -197,23 +292,80 @@ export default function App() {
     }
   }, [letters]);
 
+  const showToast = (msg: string, durationMs = 5000) => {
+    setWelcomeBanner(msg);
+    setTimeout(() => {
+      setWelcomeBanner(null);
+    }, durationMs);
+  };
+
+  // Connect Google owner account so writes sync across all shared links & devices
+  const handleConnectCloudOwner = async (pushLocalChanges = false) => {
+    manualConnectInFlightRef.current = true;
+    setIsConnectingCloud(true);
+    try {
+      const user = await signInAdminWithGoogle();
+      if (!isVerifiedAdminUser(user)) {
+        await signOutFirebaseAdmin();
+        showToast(
+          `يرجى تسجيل الدخول بحساب المالك (${ADMIN_OWNER_EMAIL}) لتفعيل الحفظ السحابي للجميع.`,
+          7000
+        );
+        return;
+      }
+
+      if (pushLocalChanges || hasPendingLocalEdits || remoteInitialized === false) {
+        setCloudStatus('saving');
+        const current = latestDataRef.current;
+        await syncAllDataToFirestore(
+          current.profile,
+          current.memories,
+          current.letters,
+          user.uid,
+          false
+        );
+        setHasPendingLocalEdits(false);
+        setCloudStatus('synced');
+        showToast('تم تفعيل الحفظ السحابي ورفع كل تعديلاتك لتظهر على كل الروابط والهواتف فوراً ☁️❤️');
+      } else {
+        showToast('تم تفعيل الحفظ السحابي بنجاح! أي تعديل ستحفظه سيظهر للجميع فوراً ☁️✅');
+      }
+    } catch (err) {
+      console.error('Google owner sign-in error:', err);
+      showToast('لم يكتمل تسجيل الدخول بحساب Google، حاول مرة أخرى لتفعيل الحفظ للجميع.');
+    } finally {
+      manualConnectInFlightRef.current = false;
+      setIsConnectingCloud(false);
+    }
+  };
+
+  const handleManualPushToCloud = async () => {
+    if (!isCloudAdmin || !firebaseUser) {
+      await handleConnectCloudOwner(true);
+      return;
+    }
+    setCloudStatus('saving');
+    try {
+      await syncAllDataToFirestore(profile, memories, letters, firebaseUser.uid, false);
+      setHasPendingLocalEdits(false);
+      setCloudStatus('synced');
+      showToast('تمت مزامنة كل الصور والتعديلات في السحابة لجميع الهواتف ☁️✅');
+    } catch (err) {
+      console.error(err);
+      setCloudStatus('offline');
+      showToast('تعذرت المزامنة مع السحابة، يرجى المحاولة مرة أخرى.');
+    }
+  };
+
   const handleLoginSuccess = (newRole: UserRole, _displayName: string, welcomeMsg?: string) => {
     setRole(newRole);
-    try {
-      window.dispatchEvent(new CustomEvent('romantic-start-music'));
-    } catch {
-      // Ignore
-    }
     try {
       localStorage.setItem(STORAGE_KEYS.AUTH_ROLE, newRole);
     } catch {
       // Ignore
     }
     if (welcomeMsg) {
-      setWelcomeBanner(welcomeMsg);
-      setTimeout(() => {
-        setWelcomeBanner(null);
-      }, 7000);
+      showToast(welcomeMsg, 7000);
     }
   };
 
@@ -232,107 +384,238 @@ export default function App() {
     [memories, activeFilter, searchQuery, sortOrder]
   );
 
-  // Add memory with cloud upload of image
+  // Add memory & sync to Firestore
   const handleAddMemory = async (newMem: Omit<MemoryItem, 'id'>) => {
     setCloudStatus('saving');
-    setWelcomeBanner('جاري حفظ الصورة ورفعها للسحابة... ☁️');
+    showToast('جاري حفظ الصورة ورفعها للسحابة... ☁️', 6000);
 
     try {
-      let finalImageUrl = newMem.imageUrl;
-      // If user selected or uploaded a base64 image, upload it to the server file storage
-      if (finalImageUrl.startsWith('data:image/')) {
-        finalImageUrl = await uploadImageToServer(finalImageUrl, newMem.title);
-      }
+      const compressedUrl = newMem.imageUrl.startsWith('data:image/')
+        ? await optimizeImage(newMem.imageUrl)
+        : newMem.imageUrl;
 
       const created: MemoryItem = {
         ...newMem,
-        imageUrl: finalImageUrl,
-        id: `mem-${Date.now()}`,
+        imageUrl: compressedUrl,
+        id: `mem_${Date.now()}`,
       };
 
-      const updated = [created, ...memories];
-      setMemories(updated);
-      await saveServerData({ memories: updated });
+      const updatedLocal = [created, ...memories];
+      setLocalMemories(updatedLocal);
+      void saveServerData({ memories: updatedLocal });
 
-      setCloudStatus('synced');
-      setWelcomeBanner('تم حفظ الصورة بنجاح وتظهر الآن على جميع الهواتف والأجهزة ❤️☁️');
+      if (isCloudAdmin && firebaseUser) {
+        if (remoteInitialized === false) {
+          await syncAllDataToFirestore(profile, updatedLocal, letters, firebaseUser.uid, false);
+        } else {
+          await createMemoryInFirestore(created, firebaseUser.uid);
+        }
+        setCloudStatus('synced');
+        showToast('تم حفظ الصورة في السحابة وتظهر الآن على كل الروابط والهواتف ❤️☁️');
+      } else {
+        setHasPendingLocalEdits(true);
+        setCloudStatus('offline');
+        showToast(
+          'تم حفظ الصورة مؤقتاً عندك فقط! اضغط "تفعيل الحفظ السحابي" بالأعلى لتظهر على رابط المشاركة ☁️',
+          8000
+        );
+      }
     } catch (err) {
       console.error(err);
-      setCloudStatus('synced');
-      setWelcomeBanner('تمت إضافة الصورة بنجاح للألبوم.');
-    } finally {
-      setTimeout(() => {
-        setWelcomeBanner(null);
-      }, 5000);
+      setCloudStatus('offline');
+      showToast('حدث خطأ أثناء رفع الصورة للسحابة، يرجى المحاولة مرة أخرى.');
     }
   };
 
-  // Toggle favorite with cloud sync
+  // Toggle favorite
   const handleToggleFavorite = async (id: string) => {
-    const updated = memories.map((m) =>
-      m.id === id ? { ...m, isFavorite: !m.isFavorite } : m
+    const target = memories.find((m) => m.id === id);
+    if (!target) return;
+    const nextFav = !target.isFavorite;
+
+    const updatedLocal = memories.map((m) =>
+      m.id === id ? { ...m, isFavorite: nextFav } : m
     );
-    setMemories(updated);
+    setLocalMemories(updatedLocal);
+    if (remoteInitialized) {
+      setRemoteMemories(updatedLocal);
+    }
     setSelectedMemory((curr) =>
-      curr && curr.id === id ? { ...curr, isFavorite: !curr.isFavorite } : curr
+      curr && curr.id === id ? { ...curr, isFavorite: nextFav } : curr
     );
-    await saveServerData({ memories: updated });
+
+    if (isEditor && isCloudAdmin && firebaseUser) {
+      try {
+        if (remoteInitialized === false) {
+          await syncAllDataToFirestore(profile, updatedLocal, letters, firebaseUser.uid, false);
+        } else {
+          await updateMemoryFavoriteInFirestore(id, nextFav);
+        }
+      } catch (err) {
+        console.error(err);
+      }
+    } else if (isEditor) {
+      setHasPendingLocalEdits(true);
+      void saveServerData({ memories: updatedLocal });
+    }
   };
 
-  // Delete memory with cloud sync
+  // Delete memory & sync to Firestore
   const handleDeleteMemory = async (id: string) => {
     setCloudStatus('saving');
-    const updated = memories.filter((m) => m.id !== id);
-    setMemories(updated);
-    await saveServerData({ memories: updated });
-    setCloudStatus('synced');
-    setWelcomeBanner('تم مسح الصورة وحفظ التعديل في السحابة لجميع الهواتف ✨');
-    setTimeout(() => {
-      setWelcomeBanner(null);
-    }, 4000);
+    const updatedLocal = memories.filter((m) => m.id !== id);
+    setLocalMemories(updatedLocal);
+    void saveServerData({ memories: updatedLocal });
+
+    if (isCloudAdmin && firebaseUser) {
+      try {
+        if (remoteInitialized === false) {
+          await syncAllDataToFirestore(profile, updatedLocal, letters, firebaseUser.uid, false);
+        } else {
+          await deleteMemoryFromFirestore(id);
+        }
+        setCloudStatus('synced');
+        showToast('تم مسح الصورة وحفظ التعديل في السحابة لجميع الهواتف والروابط ✨☁️');
+      } catch (err) {
+        console.error(err);
+        setCloudStatus('offline');
+        showToast('تعذر مسح الصورة من السحابة، يرجى المحاولة مرة أخرى.');
+      }
+    } else {
+      if (remoteInitialized) {
+        setRemoteMemories(updatedLocal);
+      }
+      setHasPendingLocalEdits(true);
+      setCloudStatus('offline');
+      showToast(
+        'تم المسح مؤقتاً عندك فقط! اضغط "تفعيل الحفظ السحابي" بالأعلى ليتم الحفظ على رابط المشاركة ☁️',
+        8000
+      );
+    }
   };
 
-  // Save profile & dates with cloud sync
+  // Save profile & dates & sync to Firestore
   const handleSaveProfile = async (newProfile: CoupleProfile) => {
     setCloudStatus('saving');
-    setProfile(newProfile);
-    await saveServerData({ profile: newProfile });
-    setCloudStatus('synced');
-    setWelcomeBanner('تم حفظ التعديلات سحابياً وتظهر الآن على جميع الهواتف ☁️');
-    setTimeout(() => {
-      setWelcomeBanner(null);
-    }, 4000);
+    setLocalProfile(newProfile);
+    if (remoteInitialized) {
+      setRemoteProfile(newProfile);
+    }
+    void saveServerData({ profile: newProfile });
+
+    if (isCloudAdmin && firebaseUser) {
+      try {
+        if (remoteInitialized === false) {
+          await syncAllDataToFirestore(newProfile, memories, letters, firebaseUser.uid, false);
+        } else {
+          await saveProfileToFirestore(newProfile, firebaseUser.uid);
+        }
+        setCloudStatus('synced');
+        showToast('تم حفظ التعديلات سحابياً وتظهر الآن على كل الروابط والهواتف ☁️❤️');
+      } catch (err) {
+        console.error(err);
+        setCloudStatus('offline');
+        showToast('تعذر حفظ التعديلات في السحابة، يرجى المحاولة مرة أخرى.');
+      }
+    } else {
+      setHasPendingLocalEdits(true);
+      setCloudStatus('offline');
+      showToast(
+        'تم الحفظ مؤقتاً عندك فقط! اضغط "تفعيل الحفظ السحابي" بالأعلى ليظهر التعديل للجميع ☁️',
+        8000
+      );
+    }
   };
 
-  // Add love letter with cloud sync
+  // Add love letter & sync to Firestore
   const handleAddLetter = async (newLet: Omit<LoveLetter, 'id'>) => {
     setCloudStatus('saving');
     const created: LoveLetter = {
       ...newLet,
-      id: `let-${Date.now()}`,
+      id: `let_${Date.now()}`,
     };
-    const updated = [created, ...letters];
-    setLetters(updated);
-    await saveServerData({ letters: updated });
-    setCloudStatus('synced');
-    setWelcomeBanner('تم حفظ رسالة الحب سحابياً وتظهر فوراً على هاتفها 💌☁️');
-    setTimeout(() => {
-      setWelcomeBanner(null);
-    }, 4500);
+    const updatedLocal = [created, ...letters];
+    setLocalLetters(updatedLocal);
+    void saveServerData({ letters: updatedLocal });
+
+    if (isCloudAdmin && firebaseUser) {
+      try {
+        if (remoteInitialized === false) {
+          await syncAllDataToFirestore(profile, memories, updatedLocal, firebaseUser.uid, false);
+        } else {
+          await createLetterInFirestore(created, firebaseUser.uid);
+        }
+        setCloudStatus('synced');
+        showToast('تم حفظ رسالة الحب سحابياً وتظهر فوراً على هاتفها 💌☁️');
+      } catch (err) {
+        console.error(err);
+        setCloudStatus('offline');
+        showToast('تعذر حفظ الرسالة في السحابة، يرجى المحاولة مرة أخرى.');
+      }
+    } else {
+      if (remoteInitialized) {
+        setRemoteLetters(updatedLocal);
+      }
+      setHasPendingLocalEdits(true);
+      setCloudStatus('offline');
+      showToast(
+        'تم حفظ الرسالة مؤقتاً عندك فقط! اضغط "تفعيل الحفظ السحابي" بالأعلى لتظهر على رابط المشاركة ☁️',
+        8000
+      );
+    }
   };
 
   const handleTogglePinLetter = async (id: string) => {
-    const updated = letters.map((l) =>
-      l.id === id ? { ...l, isPinned: !l.isPinned } : l
+    const target = letters.find((l) => l.id === id);
+    if (!target) return;
+    const nextPinned = !target.isPinned;
+
+    const updatedLocal = letters.map((l) =>
+      l.id === id ? { ...l, isPinned: nextPinned } : l
     );
-    setLetters(updated);
-    await saveServerData({ letters: updated });
+    setLocalLetters(updatedLocal);
+    if (remoteInitialized) {
+      setRemoteLetters(updatedLocal);
+    }
+    void saveServerData({ letters: updatedLocal });
+
+    if (isCloudAdmin && firebaseUser) {
+      try {
+        if (remoteInitialized === false) {
+          await syncAllDataToFirestore(profile, memories, updatedLocal, firebaseUser.uid, false);
+        } else {
+          await updateLetterPinInFirestore(id, nextPinned);
+        }
+      } catch (err) {
+        console.error(err);
+      }
+    } else {
+      setHasPendingLocalEdits(true);
+    }
   };
 
   const handleDeleteLetter = async (id: string) => {
-    const updated = letters.filter((l) => l.id !== id);
-    setLetters(updated);
-    await saveServerData({ letters: updated });
+    const updatedLocal = letters.filter((l) => l.id !== id);
+    setLocalLetters(updatedLocal);
+    if (remoteInitialized) {
+      setRemoteLetters(updatedLocal);
+    }
+    void saveServerData({ letters: updatedLocal });
+
+    if (isCloudAdmin && firebaseUser) {
+      try {
+        if (remoteInitialized === false) {
+          await syncAllDataToFirestore(profile, memories, updatedLocal, firebaseUser.uid, false);
+        } else {
+          await deleteLetterFromFirestore(id);
+        }
+        showToast('تم حذف الرسالة وتحديث السحابة لجميع الهواتف ☁️');
+      } catch (err) {
+        console.error(err);
+      }
+    } else {
+      setHasPendingLocalEdits(true);
+    }
   };
 
   // Export backup JSON
@@ -354,8 +637,7 @@ export default function App() {
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
-    setWelcomeBanner('تم تنزيل نسخة احتياطية من كل الصور والتعديلات على جهازك 💾');
-    setTimeout(() => setWelcomeBanner(null), 4000);
+    showToast('تم تنزيل نسخة احتياطية من كل الصور والتعديلات على جهازك 💾');
   };
 
   // Import backup JSON
@@ -368,20 +650,34 @@ export default function App() {
       try {
         const text = event.target?.result as string;
         const parsed = JSON.parse(text);
-        if (parsed.profile) setProfile(parsed.profile);
-        if (parsed.memories && Array.isArray(parsed.memories)) setMemories(parsed.memories);
-        if (parsed.letters && Array.isArray(parsed.letters)) setLetters(parsed.letters);
+        const importedProfile = parsed.profile || profile;
+        const importedMemories = Array.isArray(parsed.memories) ? parsed.memories : memories;
+        const importedLetters = Array.isArray(parsed.letters) ? parsed.letters : letters;
 
-        await saveServerData({
-          profile: parsed.profile,
-          memories: parsed.memories,
-          letters: parsed.letters,
+        setLocalProfile(importedProfile);
+        setLocalMemories(importedMemories);
+        setLocalLetters(importedLetters);
+        void saveServerData({
+          profile: importedProfile,
+          memories: importedMemories,
+          letters: importedLetters,
         });
 
-        setWelcomeBanner('تمت استعادة كل الصور والذكريات بنجاح وحفظها سحابياً ☁️✨');
-        setTimeout(() => setWelcomeBanner(null), 5000);
-      } catch (err) {
-        alert('الملف غير صالح كنسخة احتياطية');
+        if (isCloudAdmin && firebaseUser) {
+          await syncAllDataToFirestore(
+            importedProfile,
+            importedMemories,
+            importedLetters,
+            firebaseUser.uid,
+            false
+          );
+          showToast('تمت استعادة كل الصور والذكريات بنجاح وحفظها سحابياً للجميع ☁️✨');
+        } else {
+          setHasPendingLocalEdits(true);
+          showToast('تم الاستيراد مؤقتاً — اضغط "تفعيل الحفظ السحابي" لنشره للجميع ☁️');
+        }
+      } catch {
+        showToast('الملف غير صالح كنسخة احتياطية');
       }
     };
     reader.readAsText(file);
@@ -406,6 +702,41 @@ export default function App() {
 
       {/* Floating Audio Player with Tamer Ashour's song */}
       <RomanticAudioPlayer songTitle={profile.songTitle} />
+
+      {/* Cloud Owner Activation Banner (only shown to Ahmed if Google cloud auth is not yet connected) */}
+      {isEditor && !isCloudAdmin && (
+        <div
+          role="region"
+          aria-label="تفعيل الحفظ السحابي المشترك"
+          className="relative z-40 bg-gradient-to-r from-[#2D0D26] via-[#3A102F] to-[#2D0D26] border-b border-[#FF3366]/50 px-4 py-3 text-white shadow-lg"
+        >
+          <div className="max-w-[1240px] mx-auto flex flex-col sm:flex-row items-center justify-between gap-3 text-xs sm:text-sm">
+            <div className="flex items-center gap-2.5 text-center sm:text-right">
+              <AlertTriangle className="w-4 h-4 text-amber-300 shrink-0" />
+              <p className="font-medium text-[#FFE4EE]">
+                {hasPendingLocalEdits
+                  ? 'لديك تعديلات لم تُرفع للسحابة بعد! فعّل حساب المالك الآن لتظهر على رابط المشاركة وعند كل الناس.'
+                  : 'لتظهر تعديلاتك وصورك عند أي شخص يفتح رابط الموقع من أي هاتف، قم بتفعيل الحفظ السحابي بحسابك الآن.'}
+              </p>
+            </div>
+            <button
+              type="button"
+              disabled={isConnectingCloud}
+              onClick={() => handleConnectCloudOwner(true)}
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-gradient-to-r from-[#FF3366] to-[#E11D48] hover:from-[#FF4D88] hover:to-[#F43F5E] text-white font-bold text-xs shadow-[0_0_20px_rgba(255,51,102,0.5)] transition-all cursor-pointer shrink-0 disabled:opacity-60"
+            >
+              <Cloud className="w-4 h-4" />
+              <span>
+                {isConnectingCloud
+                  ? 'جاري الربط بالسحابة...'
+                  : hasPendingLocalEdits
+                  ? 'رفع التعديلات للسحابة الآن (Google)'
+                  : 'تفعيل الحفظ السحابي للجميع (Google)'}
+              </span>
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Welcome Banner / Cloud Sync Toast */}
       {welcomeBanner && (
@@ -483,16 +814,27 @@ export default function App() {
               <div
                 role="menu"
                 aria-label="قائمة التعديلات السريعة"
-                className="p-3 bg-[#170B1F]/95 backdrop-blur-md border border-[#441E53] rounded-2xl shadow-2xl flex flex-col gap-1.5 w-64 animate-in fade-in slide-in-from-bottom-2 duration-200"
+                className="p-3 bg-[#170B1F]/95 backdrop-blur-md border border-[#441E53] rounded-2xl shadow-2xl flex flex-col gap-1.5 w-72 animate-in fade-in slide-in-from-bottom-2 duration-200"
               >
-                <div className="px-3 py-1.5 border-b border-[#30153D] flex items-center justify-between">
+                <div className="px-3 py-1.5 border-b border-[#30153D] flex items-center justify-between gap-2">
                   <span className="text-[11px] font-bold text-[#FFA5BA]">
                     لوحة التحكم وتعديل الموقع
                   </span>
-                  <span className="inline-flex items-center gap-1 text-[10px] text-emerald-400 bg-emerald-950/60 border border-emerald-500/30 px-2 py-0.5 rounded-full">
-                    <Cloud className="w-3 h-3 text-emerald-400" />
-                    <span>سحابي لجميع الهواتف</span>
-                  </span>
+                  {isCloudAdmin ? (
+                    <span className="inline-flex items-center gap-1 text-[10px] text-emerald-400 bg-emerald-950/60 border border-emerald-500/30 px-2 py-0.5 rounded-full">
+                      <Cloud className="w-3 h-3 text-emerald-400" />
+                      <span>{cloudStatus === 'saving' ? 'جاري الحفظ...' : 'سحابي للجميع'}</span>
+                    </span>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => handleConnectCloudOwner(true)}
+                      className="inline-flex items-center gap-1 text-[10px] text-amber-300 bg-amber-950/70 border border-amber-500/40 px-2 py-0.5 rounded-full hover:bg-amber-900 cursor-pointer"
+                    >
+                      <Cloud className="w-3 h-3" />
+                      <span>ربط السحابة</span>
+                    </button>
+                  )}
                 </div>
 
                 <button
@@ -541,6 +883,18 @@ export default function App() {
                 >
                   <Feather className="w-4 h-4 text-[#FDA4AF]" />
                   <span>كتابة رسالة حب</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsControlMenuOpen(false);
+                    void handleManualPushToCloud();
+                  }}
+                  className="flex items-center gap-2 px-3 py-2 text-xs font-medium text-emerald-300 hover:bg-[#251032] rounded-xl transition-colors cursor-pointer text-right w-full"
+                >
+                  <RefreshCw className="w-4 h-4 text-emerald-400" />
+                  <span>مزامنة التعديلات للجميع الآن</span>
                 </button>
 
                 <div className="pt-2 border-t border-[#30153D] flex items-center justify-between gap-1">

@@ -1,0 +1,275 @@
+{
+  "entities": {
+    "CoupleProfile": {
+      "title": "CoupleProfile",
+      "description": "Shared romantic profile, couple names, start date, hero messages, and song metadata.",
+      "type": "object",
+      "properties": {
+        "partnerOneName": {
+          "type": "string",
+          "description": "First partner display name",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "partnerTwoName": {
+          "type": "string",
+          "description": "Second partner display name",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "startDate": {
+          "type": "string",
+          "description": "Relationship start date in YYYY-MM-DD format",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+          "maxLength": 10
+        },
+        "firstMetLabel": {
+          "type": "string",
+          "description": "Label describing the relationship start date",
+          "maxLength": 120
+        },
+        "romanticTagline": {
+          "type": "string",
+          "description": "Short romantic tagline shown in top bar",
+          "maxLength": 120
+        },
+        "heroTitle": {
+          "type": "string",
+          "description": "Main hero headline",
+          "minLength": 1,
+          "maxLength": 300
+        },
+        "heroSubtitle": {
+          "type": "string",
+          "description": "Main hero subtitle dedication",
+          "maxLength": 1000
+        },
+        "heroImageUrl": {
+          "type": "string",
+          "description": "Hero background or cover image URL",
+          "maxLength": 600000
+        },
+        "songTitle": {
+          "type": "string",
+          "description": "Display title of the background romantic song",
+          "maxLength": 200
+        },
+        "ownerId": {
+          "type": "string",
+          "description": "Firebase Auth UID of the site owner",
+          "maxLength": 128
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of creation"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of last update"
+        }
+      },
+      "required": [
+        "partnerOneName",
+        "partnerTwoName",
+        "startDate",
+        "heroTitle",
+        "ownerId",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "MemoryItem": {
+      "title": "MemoryItem",
+      "description": "A shared photo memory with title, date, location, story, and favorite status.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique memory document ID",
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "maxLength": 128
+        },
+        "title": {
+          "type": "string",
+          "description": "Memory title",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "date": {
+          "type": "string",
+          "description": "Memory date in YYYY-MM-DD format",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+          "maxLength": 10
+        },
+        "location": {
+          "type": "string",
+          "description": "Memory location",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "category": {
+          "type": "string",
+          "description": "Memory category",
+          "enum": ["first_moments", "trips", "special_dates", "everyday"],
+          "maxLength": 30
+        },
+        "story": {
+          "type": "string",
+          "description": "Detailed story of the memory",
+          "minLength": 1,
+          "maxLength": 3000
+        },
+        "imageUrl": {
+          "type": "string",
+          "description": "Photo URL or optimized compressed data URL",
+          "minLength": 1,
+          "maxLength": 600000
+        },
+        "isFavorite": {
+          "type": "boolean",
+          "description": "Whether the memory is marked as favorite"
+        },
+        "featuredSpan": {
+          "type": "string",
+          "description": "Layout span style",
+          "enum": ["wide", "standard"],
+          "maxLength": 20
+        },
+        "albumScope": {
+          "type": "string",
+          "description": "Shared album partition scope",
+          "enum": ["hikayatuna_main"],
+          "maxLength": 32
+        },
+        "ownerId": {
+          "type": "string",
+          "description": "Firebase Auth UID of the creator/owner",
+          "maxLength": 128
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of creation"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of last update"
+        }
+      },
+      "required": [
+        "id",
+        "title",
+        "date",
+        "location",
+        "category",
+        "story",
+        "imageUrl",
+        "isFavorite",
+        "albumScope",
+        "ownerId",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "LoveLetter": {
+      "title": "LoveLetter",
+      "description": "A romantic love letter written for the album.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique letter document ID",
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "maxLength": 128
+        },
+        "title": {
+          "type": "string",
+          "description": "Letter title",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "date": {
+          "type": "string",
+          "description": "Letter date in YYYY-MM-DD format",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+          "maxLength": 10
+        },
+        "occasion": {
+          "type": "string",
+          "description": "Letter occasion",
+          "maxLength": 200
+        },
+        "content": {
+          "type": "string",
+          "description": "Body text of the love letter",
+          "minLength": 1,
+          "maxLength": 5000
+        },
+        "signature": {
+          "type": "string",
+          "description": "Sender signature",
+          "maxLength": 120
+        },
+        "isPinned": {
+          "type": "boolean",
+          "description": "Whether the letter is pinned to top"
+        },
+        "albumScope": {
+          "type": "string",
+          "description": "Shared album partition scope",
+          "enum": ["hikayatuna_main"],
+          "maxLength": 32
+        },
+        "ownerId": {
+          "type": "string",
+          "description": "Firebase Auth UID of the creator/owner",
+          "maxLength": 128
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of creation"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of last update"
+        }
+      },
+      "required": [
+        "id",
+        "title",
+        "date",
+        "content",
+        "isPinned",
+        "albumScope",
+        "ownerId",
+        "createdAt",
+        "updatedAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/site_settings/{settingId}": {
+      "schema": {
+        "$ref": "#/entities/CoupleProfile"
+      },
+      "description": "Stores shared site configuration and hero profile under document ID 'main'."
+    },
+    "/memories/{memoryId}": {
+      "schema": {
+        "$ref": "#/entities/MemoryItem"
+      },
+      "description": "Stores shared photo memories displayed in gallery and timeline."
+    },
+    "/letters/{letterId}": {
+      "schema": {
+        "$ref": "#/entities/LoveLetter"
+      },
+      "description": "Stores shared love letters displayed in the letters section."
+    }
+  }
+}

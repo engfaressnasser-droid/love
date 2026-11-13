@@ -1,0 +1,258 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global default-deny catch-all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- Global Hardened Helpers ---
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return isSignedIn()
+        && request.auth.token.email_verified == true
+        && request.auth.token.email == 'eng.faressnasser@gmail.com';
+    }
+
+    // --- Validation Blueprints ---
+    function isValidCoupleProfile(data) {
+      return data.keys().hasAll([
+          'partnerOneName',
+          'partnerTwoName',
+          'startDate',
+          'heroTitle',
+          'ownerId',
+          'createdAt',
+          'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'partnerOneName',
+          'partnerTwoName',
+          'startDate',
+          'firstMetLabel',
+          'romanticTagline',
+          'heroTitle',
+          'heroSubtitle',
+          'heroImageUrl',
+          'songTitle',
+          'ownerId',
+          'createdAt',
+          'updatedAt'
+        ])
+        && data.partnerOneName is string && data.partnerOneName.size() >= 1 && data.partnerOneName.size() <= 80
+        && data.partnerTwoName is string && data.partnerTwoName.size() >= 1 && data.partnerTwoName.size() <= 80
+        && data.startDate is string && data.startDate.size() == 10 && data.startDate.matches('^\\d{4}-\\d{2}-\\d{2}$')
+        && (!('firstMetLabel' in data) || (data.firstMetLabel is string && data.firstMetLabel.size() <= 120))
+        && (!('romanticTagline' in data) || (data.romanticTagline is string && data.romanticTagline.size() <= 120))
+        && data.heroTitle is string && data.heroTitle.size() >= 1 && data.heroTitle.size() <= 300
+        && (!('heroSubtitle' in data) || (data.heroSubtitle is string && data.heroSubtitle.size() <= 1000))
+        && (!('heroImageUrl' in data) || (data.heroImageUrl is string && data.heroImageUrl.size() <= 600000))
+        && (!('songTitle' in data) || (data.songTitle is string && data.songTitle.size() <= 200))
+        && data.ownerId is string && data.ownerId.size() >= 1 && data.ownerId.size() <= 128
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidMemoryItem(data) {
+      return data.keys().hasAll([
+          'id',
+          'title',
+          'date',
+          'location',
+          'category',
+          'story',
+          'imageUrl',
+          'isFavorite',
+          'albumScope',
+          'ownerId',
+          'createdAt',
+          'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'id',
+          'title',
+          'date',
+          'location',
+          'category',
+          'story',
+          'imageUrl',
+          'isFavorite',
+          'featuredSpan',
+          'albumScope',
+          'ownerId',
+          'createdAt',
+          'updatedAt'
+        ])
+        && isValidId(data.id)
+        && data.title is string && data.title.size() >= 1 && data.title.size() <= 200
+        && data.date is string && data.date.size() == 10 && data.date.matches('^\\d{4}-\\d{2}-\\d{2}$')
+        && data.location is string && data.location.size() >= 1 && data.location.size() <= 200
+        && data.category is string && data.category.size() <= 30 && data.category in ['first_moments', 'trips', 'special_dates', 'everyday']
+        && data.story is string && data.story.size() >= 1 && data.story.size() <= 3000
+        && data.imageUrl is string && data.imageUrl.size() >= 1 && data.imageUrl.size() <= 600000
+        && data.isFavorite is bool
+        && (!('featuredSpan' in data) || (data.featuredSpan is string && data.featuredSpan.size() <= 20 && data.featuredSpan in ['wide', 'standard']))
+        && data.albumScope is string && data.albumScope.size() <= 32 && data.albumScope == 'hikayatuna_main'
+        && data.ownerId is string && data.ownerId.size() >= 1 && data.ownerId.size() <= 128
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidLoveLetter(data) {
+      return data.keys().hasAll([
+          'id',
+          'title',
+          'date',
+          'content',
+          'isPinned',
+          'albumScope',
+          'ownerId',
+          'createdAt',
+          'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'id',
+          'title',
+          'date',
+          'occasion',
+          'content',
+          'signature',
+          'isPinned',
+          'albumScope',
+          'ownerId',
+          'createdAt',
+          'updatedAt'
+        ])
+        && isValidId(data.id)
+        && data.title is string && data.title.size() >= 1 && data.title.size() <= 200
+        && data.date is string && data.date.size() == 10 && data.date.matches('^\\d{4}-\\d{2}-\\d{2}$')
+        && (!('occasion' in data) || (data.occasion is string && data.occasion.size() <= 200))
+        && data.content is string && data.content.size() >= 1 && data.content.size() <= 5000
+        && (!('signature' in data) || (data.signature is string && data.signature.size() <= 120))
+        && data.isPinned is bool
+        && data.albumScope is string && data.albumScope.size() <= 32 && data.albumScope == 'hikayatuna_main'
+        && data.ownerId is string && data.ownerId.size() >= 1 && data.ownerId.size() <= 128
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    // --- Collection Rules ---
+    // Non-PII shared romantic album content: readable across all devices/links,
+    // writable strictly by the verified admin owner.
+    match /site_settings/{settingId} {
+      allow get: if isValidId(settingId) && settingId == 'main';
+      allow list: if false;
+      allow create: if isAdmin()
+        && isValidId(settingId)
+        && settingId == 'main'
+        && isValidCoupleProfile(incoming())
+        && incoming().ownerId == request.auth.uid
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isAdmin()
+        && isValidId(settingId)
+        && settingId == 'main'
+        && isValidCoupleProfile(incoming())
+        && incoming().ownerId == existing().ownerId
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'partnerOneName',
+          'partnerTwoName',
+          'startDate',
+          'firstMetLabel',
+          'romanticTagline',
+          'heroTitle',
+          'heroSubtitle',
+          'heroImageUrl',
+          'songTitle',
+          'updatedAt'
+        ]);
+      allow delete: if false;
+    }
+
+    match /memories/{memoryId} {
+      allow get: if isValidId(memoryId);
+      allow list: if resource.data.albumScope == 'hikayatuna_main';
+      allow create: if isAdmin()
+        && isValidId(memoryId)
+        && isValidMemoryItem(incoming())
+        && incoming().id == memoryId
+        && incoming().ownerId == request.auth.uid
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isAdmin()
+        && isValidId(memoryId)
+        && isValidMemoryItem(incoming())
+        && incoming().id == existing().id
+        && incoming().albumScope == existing().albumScope
+        && incoming().ownerId == existing().ownerId
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          incoming().diff(existing()).affectedKeys().hasOnly(['isFavorite', 'updatedAt'])
+          || incoming().diff(existing()).affectedKeys().hasOnly([
+            'title',
+            'date',
+            'location',
+            'category',
+            'story',
+            'imageUrl',
+            'isFavorite',
+            'featuredSpan',
+            'updatedAt'
+          ])
+        );
+      allow delete: if isAdmin() && isValidId(memoryId);
+    }
+
+    match /letters/{letterId} {
+      allow get: if isValidId(letterId);
+      allow list: if resource.data.albumScope == 'hikayatuna_main';
+      allow create: if isAdmin()
+        && isValidId(letterId)
+        && isValidLoveLetter(incoming())
+        && incoming().id == letterId
+        && incoming().ownerId == request.auth.uid
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isAdmin()
+        && isValidId(letterId)
+        && isValidLoveLetter(incoming())
+        && incoming().id == existing().id
+        && incoming().albumScope == existing().albumScope
+        && incoming().ownerId == existing().ownerId
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          incoming().diff(existing()).affectedKeys().hasOnly(['isPinned', 'updatedAt'])
+          || incoming().diff(existing()).affectedKeys().hasOnly([
+            'title',
+            'date',
+            'occasion',
+            'content',
+            'signature',
+            'isPinned',
+            'updatedAt'
+          ])
+        );
+      allow delete: if isAdmin() && isValidId(letterId);
+    }
+  }
+}
